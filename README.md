@@ -1,6 +1,8 @@
 # Reflective Shadow Map
 Naive implementation of [Reflective Shadow Map](https://dl.acm.org/doi/10.1145/1053427.1053460) without Screen-space interpolation or any optimization. This demo is based on [Cauldron Framework](https://github.com/GPUOpen-LibrariesAndSDKs/Cauldron), and it only exploits Vulkan backend.
 
+![RSM](https://github.com/whatevermarch/rsm/raw/main/screenshot.png)
+
 ## Prerequisites
 The following packages need to be installed in order to run this demo.
 - CMake 3.16
