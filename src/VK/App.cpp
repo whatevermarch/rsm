@@ -220,21 +220,27 @@ void App::OnRender()
         if (ImGui::CollapsingHeader("Scene Config", ImGuiTreeNodeFlags_DefaultOpen))
         {
             //  sun orientation
-            //{
-            //    float meter = 3.f * (this->sun_pitch - XM_PI / 2.f) / XM_PI;
-            //    ImGui::SliderFloat("Sun Orientation", &meter, -1.f, 1.f);
+            {
+                float meter = 3.f * (this->sun_pitch - XM_PI / 2.f) / XM_PI;
+                ImGui::SliderFloat("Sun Orientation", &meter, -1.f, 1.f);
 
-            //    //  update light direction
-            //    this->sun_pitch = XM_PI * (2.f * meter + 3.f) / 6.f;
-            //    this->renderer_state.sunDir = PolarToVector(XM_PI / 2.f, this->sun_pitch);
+                //  update light direction
+                this->sun_pitch = XM_PI * (2.f * meter + 3.f) / 6.f;
+                this->renderer_state.sunDir = PolarToVector(XM_PI / 2.f, this->sun_pitch);
 
-            //    //  update light transformation matrix
-            //    int light_node_idx = this->sceneLoader->m_lightInstances[0].m_nodeIndex;
-            //    this->sceneLoader->m_nodes[light_node_idx].m_tranform.LookAt(
-            //        this->renderer_state.sunDir * 20.5f, XMVectorSet(0, 0, 0, 0));
-            //    this->sceneLoader->m_animatedMats[light_node_idx] =
-            //        this->sceneLoader->m_nodes[light_node_idx].m_tranform.GetWorldMat();
-            //}
+                //  update light transformation matrix
+                //  ToDo : do only for directional light settings
+                /*int light_node_idx = this->sceneLoader->m_lightInstances[0].m_nodeIndex;
+                this->sceneLoader->m_nodes[light_node_idx].m_tranform.LookAt(
+                    this->renderer_state.sunDir * 20.5f, XMVectorSet(0, 0, 0, 0));
+                this->sceneLoader->m_animatedMats[light_node_idx] =
+                    this->sceneLoader->m_nodes[light_node_idx].m_tranform.GetWorldMat();*/
+            }
+        }
+
+        if (ImGui::CollapsingHeader("Debug", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::SliderFloat("D/I Contribution", &this->renderer_state.DIWeight, 0.f, 1.f);
         }
 
         ImGui::End();

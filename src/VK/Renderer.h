@@ -11,7 +11,8 @@ public:
 
 	struct State
 	{
-		XMVECTOR sunDir;	
+		XMVECTOR sunDir;
+		float DIWeight = 0.5f; // 0 = full dLight, 1 = full iLight
 	};
 
 	//	mandatory methods

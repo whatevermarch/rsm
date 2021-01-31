@@ -382,7 +382,7 @@ void Renderer::OnRender(SwapChain* pSwapChain, Camera* pCamera, Renderer::State*
     this->doLightingTransition(cmdBuf1);
 
     //  aggregation (D-Light + I-Light)
-    this->aggregator.Draw(cmdBuf1, 0.5f);
+    this->aggregator.Draw(cmdBuf1, pState->DIWeight);
 
     //  image barrier (synchronization) before TAA
     this->doAggregationTransition(cmdBuf1);
