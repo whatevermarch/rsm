@@ -1,0 +1,6 @@
+[submodule "Cauldron"]
+	path = Cauldron
+	url = git@github.com:whatevermarch/Cauldron.git
+[submodule "res/Cauldron-Media"]
+	path = res/Cauldron-Media
+	url = https://github.com/GPUOpen-LibrariesAndSDKs/Cauldron-Media.git
