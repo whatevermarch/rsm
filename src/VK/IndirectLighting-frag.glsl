@@ -29,6 +29,7 @@ layout (std140, set = 0, binding = ID_sampleOffsets) uniform SampleOffsets
 {
     vec4 sampleOffsets[50]; // since it's impossible to align as 8-byte, use packed elements instead.
 };
+layout (set = 0, binding = ID_kernelRotations) uniform sampler2D kernelRotations 
 const int numSamples = 100;
 const float r_max = 0.125; // considered from texcoord range (1 quarter) [0.0,0.5]
 
@@ -38,6 +39,8 @@ layout (set = 1, binding = 2) uniform sampler2D glight_Flux;
 
 layout (set = 2, binding = 0) uniform sampler2D gcam_WorldCoord;
 layout (set = 2, binding = 1) uniform sampler2D gcam_Normal;
+
+const int rsmDim = 1024;
 
 //--------------------------------------------------------------------------------------
 //  FS outputs
@@ -52,7 +55,7 @@ layout (location = 0) out vec4 out_color;
 #include "functions.glsl"
 #include "PBRLighting.h"
 
-vec3 integrateIndirectIrradiance(Light light, vec3 worldPos, vec3 normal)
+vec3 integrateIndirectIrradiance(vec2 uvCoord, Light light, vec3 worldPos, vec3 normal)
 {
     vec3 irradiance = vec3(0.0, 0.0, 0.0);
 
@@ -62,24 +65,38 @@ vec3 integrateIndirectIrradiance(Light light, vec3 worldPos, vec3 normal)
     if((rsmTexCoord.z < 0) || (rsmTexCoord.z > 1.0)) return irradiance;
 
     //  remember we are splitting the shadow map in 4 quarters 
+    //  from [-1,1] to [0,0.5] (+ offset)
     rsmTexCoord.x = (1.0 + rsmTexCoord.x) * 0.25;
     rsmTexCoord.y = (1.0 - rsmTexCoord.y) * 0.25;
     const float offsetsX[4] = { 0.0, 0.5, 0.0, 0.5 };
     const float offsetsY[4] = { 0.0, 0.0, 0.5, 0.5 };
 
+    //  fetch rotation angle
+    //  map rsmTexCoord to noiseTexCoord : [0,0.5] -> [0,4] (repeatable texture)
+    float rotationAngle = texture(kernelRotations, modf(rsmTexCoord * 8.0)).r;
+    rotationAngle *= 2.0 * M_PI;
+
     //  sampling & accumulate
     for (int i = 0; i < numSamples; i++)
     {
+        //  fetch offset
         vec2 sampleOffset = vec2(0.0, 0.0);
-        if ((i % 2) == 0) sampleOffset = sampleOffsets[i/2].xy;
+        if (mod(i,2) == 0) sampleOffset = sampleOffsets[i/2].xy;
         else sampleOffset = sampleOffsets[i/2].zw;
 
-        vec2 sampleCoord = rsmTexCoord.xy + sampleOffset * r_max;
+        //  rotate the offset vector
+        float sin_theta = sin(rotationAngle);
+        float cos_theta = cos(rotationAngle);
+        sampleOffset = mat2(cos_theta, sin_theta, -sin_theta, cos_theta) * sampleOffset * r_max;
+        
+        //  determine sampling location in RSM
+        vec2 sampleCoord = rsmTexCoord.xy + sampleOffset;
         if ((sampleCoord.y < 0) || (sampleCoord.y > .5) ||
             (sampleCoord.x < 0) || (sampleCoord.x > .5)) continue;
         sampleCoord.x += offsetsX[light.shadowMapIndex];
         sampleCoord.y += offsetsY[light.shadowMapIndex];
 
+        //  calculate irradiance
         vec3 light_WorldPos = texture(glight_WorldCoord, sampleCoord).rgb;
         vec3 light_Normal = texture(glight_Normal, sampleCoord).rgb * 2.0 - 1.0;
         vec3 light_Flux = texture(glight_Flux, sampleCoord).rgb;
@@ -110,7 +127,7 @@ void main()
     vec3 cam_Normal = texture(gcam_Normal, texCoord).rgb * 2.0 - 1.0;
     
     //  indirect lighting
-    vec3 i_light = integrateIndirectIrradiance(myPerFrame.u_light, cam_WorldPos, cam_Normal);
+    vec3 i_light = integrateIndirectIrradiance(texCoord, myPerFrame.u_light, cam_WorldPos, cam_Normal);
 
     //  calculate final color
     out_color = vec4(i_light, 1.0);

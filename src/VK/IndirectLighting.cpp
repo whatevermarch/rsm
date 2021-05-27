@@ -64,8 +64,29 @@ void IndirectLighting::OnCreate(
         assert(res == VK_SUCCESS);
     }
 
+    //  create sampler for sampling rotation noise texture
+    //  the texture is repeatable in 4 patches per dimension in RSM
+    {
+        VkSamplerCreateInfo info = {};
+        info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        info.magFilter = VK_FILTER_LINEAR;
+        info.minFilter = VK_FILTER_LINEAR;
+        info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        info.minLod = -1000;
+        info.maxLod = 1000;
+        info.maxAnisotropy = 1.0f;
+        VkResult res = vkCreateSampler(pDevice->GetDevice(), &info, NULL, &this->sampler_kernelRotation);
+        assert(res == VK_SUCCESS);
+    }
+
     //  generate sample offsets used for sampling around a particular pixel
     this->generateSamplingOffsets();
+
+    //  generate noise texture to determine each pixel's random rotation
+    this->generateSamplingKernelRotation(*pUploadHeap);
 
     //  create (or derive) render pass
     if (renderPass != VK_NULL_HANDLE)
@@ -105,8 +126,16 @@ void IndirectLighting::OnDestroy()
     }
     this->renderPass = VK_NULL_HANDLE;
 
-    //  destroy sampler
+    //  destroy default sampler
     vkDestroySampler(this->pDevice->GetDevice(), this->sampler_default, nullptr);
+
+    //  destroy kernel rotation sampler
+    vkDestroySampler(this->pDevice->GetDevice(), this->sampler_kernelRotation, nullptr);
+
+    //  destroy kernel rotation noise
+    vkDestroyImageView(this->pDevice->GetDevice(), this->srv_kernelRotation, nullptr);
+    this->srv_output = VK_NULL_HANDLE;
+    this->kernelRotation.OnDestroy();
 
     this->pDevice = nullptr;
     this->pResourceViewHeaps = nullptr;
@@ -334,7 +363,7 @@ void IndirectLighting::createDescriptors(DefineList* pAttributeDefines)
     //  set 0 (general)
     {
         //  define bindings
-        layout_bindings.resize(2);
+        layout_bindings.resize(3);
         layout_bindings[0].binding = 0;
         layout_bindings[0].descriptorCount = 1;
         layout_bindings[0].pImmutableSamplers = NULL;
@@ -348,6 +377,13 @@ void IndirectLighting::createDescriptors(DefineList* pAttributeDefines)
         layout_bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         layout_bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
         (*pAttributeDefines)["ID_sampleOffsets"] = std::to_string(layout_bindings[1].binding);
+
+        layout_bindings[2].binding = 2;
+        layout_bindings[2].descriptorCount = 1;
+        layout_bindings[2].pImmutableSamplers = NULL;
+        layout_bindings[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        layout_bindings[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        (*pAttributeDefines)["ID_kernelRotations"] = std::to_string(layout_bindings[2].binding);
 
         //  create desc. set
         this->pResourceViewHeaps->CreateDescriptorSetLayoutAndAllocDescriptorSet(
@@ -371,6 +407,10 @@ void IndirectLighting::createDescriptors(DefineList* pAttributeDefines)
         write.dstBinding = layout_bindings[1].binding;
 
         vkUpdateDescriptorSets(this->pDevice->GetDevice(), 1, &write, 0, NULL);
+
+        //  update kernel rotations
+        SetDescriptorSet(this->pDevice->GetDevice(), 2, this->srv_kernelRotation, 
+            &this->sampler_kernelRotation, this->descriptorSets[0]);
     }
 
     //  set 1 (RSM)
@@ -576,7 +616,7 @@ void IndirectLighting::generateSamplingOffsets()
     //  initialize randomizer using normal dist. with the following mean, S.D.
     //  NOTE : S.D. is approximated by chebyshev's inequality
     std::default_random_engine generator;
-    std::normal_distribution<float> distribution(0.0f, 0.36f); 
+    std::normal_distribution<float> distribution(0.0f, 0.36f);
 
     //  define random function
     auto sample_normal = [&distribution, &generator]() {
@@ -602,4 +642,32 @@ void IndirectLighting::generateSamplingOffsets()
         pOffset[i].first = sample_normal();
         pOffset[i].second = sample_normal();
     }
+}
+
+void IndirectLighting::generateSamplingKernelRotation(UploadHeap& uploadHeap)
+{
+    //  initialize randomizer using uniform dist. w/ elem in [0,1]
+    std::default_random_engine generator;
+    std::uniform_real_distribution<float> distribution;
+    
+    //  generate noise texture in host
+    const int noiseDim = 64;
+    std::vector<float> rotations(noiseDim * noiseDim);
+    for (float& rotation : rotations)
+        rotation = distribution(generator);
+
+    //  upload noise data to GPU
+    {
+        IMG_INFO texInfo;
+        texInfo.width = noiseDim;
+        texInfo.height = noiseDim;
+        texInfo.depth = 1;
+        texInfo.mipMapCount = 1;
+        texInfo.arraySize = 1;
+        texInfo.format = DXGI_FORMAT_R32_FLOAT;
+        texInfo.bitCount = 32;
+
+        this->kernelRotation.InitFromData(this->pDevice, uploadHeap, texInfo, rotations.data());
+    }
+    this->kernelRotation.CreateSRV(&this->srv_kernelRotation);
 }
