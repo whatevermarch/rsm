@@ -667,7 +667,7 @@ void IndirectLighting::generateSamplingKernelRotation(UploadHeap& uploadHeap)
         texInfo.format = DXGI_FORMAT_R32_FLOAT;
         texInfo.bitCount = 32;
 
-        this->kernelRotation.InitFromData(this->pDevice, uploadHeap, texInfo, rotations.data());
+        this->kernelRotation.InitFromData(this->pDevice, uploadHeap, texInfo, rotations.data(), "Noise Texture For RSM");
     }
     this->kernelRotation.CreateSRV(&this->srv_kernelRotation);
 }

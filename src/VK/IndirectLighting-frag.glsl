@@ -29,7 +29,7 @@ layout (std140, set = 0, binding = ID_sampleOffsets) uniform SampleOffsets
 {
     vec4 sampleOffsets[50]; // since it's impossible to align as 8-byte, use packed elements instead.
 };
-layout (set = 0, binding = ID_kernelRotations) uniform sampler2D kernelRotations 
+layout (set = 0, binding = ID_kernelRotations) uniform sampler2D kernelRotations; 
 const int numSamples = 100;
 const float r_max = 0.125; // considered from texcoord range (1 quarter) [0.0,0.5]
 
@@ -73,7 +73,7 @@ vec3 integrateIndirectIrradiance(vec2 uvCoord, Light light, vec3 worldPos, vec3 
 
     //  fetch rotation angle
     //  map rsmTexCoord to noiseTexCoord : [0,0.5] -> [0,4] (repeatable texture)
-    float rotationAngle = texture(kernelRotations, modf(rsmTexCoord * 8.0)).r;
+    float rotationAngle = texture(kernelRotations, rsmTexCoord.xy * (rsmDim / 4)).r;
     rotationAngle *= 2.0 * M_PI;
 
     //  sampling & accumulate
