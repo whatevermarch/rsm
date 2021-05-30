@@ -33,7 +33,7 @@ void Renderer::OnCreate(Device* pDevice, SwapChain* pSwapChain)
 
 	// Quick helper to upload resources, it has it's own commandList and uses suballocation.
 	// for 4K textures we'll need 100Megs
-	const uint32_t uploadHeapMemSize = 1000 * 1024 * 1024;
+	const uint32_t uploadHeapMemSize = 100 * 1024 * 1024;
 	this->uploadHeap.OnCreate(pDevice, uploadHeapMemSize); // initialize an upload heap (uses suballocation for faster results)
 
 	// initialize the GPU time stamps module

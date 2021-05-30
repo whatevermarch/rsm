@@ -71,6 +71,10 @@ protected:
     VkDescriptorBufferInfo descInfo_perFrame, descInfo_sampleOffsets;
     VkSampler sampler_default;
 
+    Texture kernelRotation;
+    VkImageView srv_kernelRotation = VK_NULL_HANDLE;
+    VkSampler sampler_kernelRotation;
+
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipelineLayout pipelineLayout = VK_NULL_HANDLE;
 
@@ -88,5 +92,6 @@ protected:
     void createPipeline(const DefineList* defines);
 
     void generateSamplingOffsets();
+    void generateSamplingKernelRotation(UploadHeap& uploadHeap);
 };
 
