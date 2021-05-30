@@ -615,18 +615,26 @@ void IndirectLighting::createPipeline(const DefineList* defines)
 
 void IndirectLighting::generateSamplingOffsets()
 {
-    //  initialize randomizer using normal dist. with the following mean, S.D.
-    //  NOTE : S.D. is approximated by chebyshev's inequality
+    //  initialize randomizer using gamma dist. with the following alpha and beta resp.
     std::default_random_engine generator;
-    std::normal_distribution<float> distribution(0.0f, 0.36f);
+    std::gamma_distribution<float> dist_r(3.5f, 1.0f);
+    std::uniform_real_distribution<float> dist_theta(-XM_PI, XM_PI); // to rotate uniformly in 2D
 
-    //  define random function
-    auto sample_normal = [&distribution, &generator]() {
-        float x;
+    //  setup sampling function
+    auto sample_offset = [&dist_r, &dist_theta, &generator]() -> std::pair<float, float>
+    {
+        float r, theta;
+
+        //  sample r
         do {
-            x = distribution(generator);
-        } while (x < -1.f || x > 1.f);
-        return x;
+            r = dist_r(generator);
+        } while (r > 10.f); // set the cutoff at 10.0 according to gamma distribution
+        r /= 10.f;          // normalize
+
+        //  sample theta
+        theta = dist_theta(generator);
+
+        return { r * std::cosf(theta), r * std::sinf(theta) };
     };
 
     //  allocate memory in static buffer pool
@@ -640,10 +648,7 @@ void IndirectLighting::generateSamplingOffsets()
 
     //  generate each sample an offset (x,y)
     for (int i = 0; i < NUM_RSM_SAMPLES; i++)
-    {
-        pOffset[i].first = sample_normal();
-        pOffset[i].second = sample_normal();
-    }
+        pOffset[i] = sample_offset();
 }
 
 void IndirectLighting::generateSamplingKernelRotation(UploadHeap& uploadHeap)
