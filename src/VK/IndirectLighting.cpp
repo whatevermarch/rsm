@@ -362,8 +362,10 @@ void IndirectLighting::createDescriptors(DefineList* pAttributeDefines)
 
     //  set 0 (general)
     {
+        const int numBindings = 3;
+
         //  define bindings
-        layout_bindings.resize(3);
+        layout_bindings.resize(numBindings);
         layout_bindings[0].binding = 0;
         layout_bindings[0].descriptorCount = 1;
         layout_bindings[0].pImmutableSamplers = NULL;
@@ -656,7 +658,7 @@ void IndirectLighting::generateSamplingKernelRotation(UploadHeap& uploadHeap)
     for (float& rotation : rotations)
         rotation = distribution(generator);
 
-    //  upload noise data to GPU
+    //  init noise texture object
     {
         IMG_INFO texInfo;
         texInfo.width = noiseDim;
@@ -667,7 +669,12 @@ void IndirectLighting::generateSamplingKernelRotation(UploadHeap& uploadHeap)
         texInfo.format = DXGI_FORMAT_R32_FLOAT;
         texInfo.bitCount = 32;
 
-        this->kernelRotation.InitFromData(this->pDevice, uploadHeap, texInfo, rotations.data(), "Noise Texture For RSM");
+        this->kernelRotation.InitFromData(this->pDevice, uploadHeap, texInfo, rotations.data(), "Noise Texture");
     }
+
+    //  upload noise data to GPU
+    uploadHeap.FlushAndFinish();
+
+    //  create image view
     this->kernelRotation.CreateSRV(&this->srv_kernelRotation);
 }
