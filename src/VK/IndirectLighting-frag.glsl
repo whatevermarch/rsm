@@ -33,7 +33,7 @@ const int numSamples = 100;
 const float r_max = 0.125; // considered from texcoord range (1 quarter) [0.0,0.5]
 
 layout (set = 0, binding = ID_kernelRotations) uniform sampler2D kernelRotations;
-const float noiseResolution = 8.0; // recommended at 4-16 
+const float noiseResolution = 4.0; // recommended at 4-16 
 
 layout (set = 1, binding = 0) uniform sampler2D glight_WorldCoord;
 layout (set = 1, binding = 1) uniform sampler2D glight_Normal;
