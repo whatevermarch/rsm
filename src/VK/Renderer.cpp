@@ -6,6 +6,8 @@
 //	ToDo : let's experiment if 2 is sufficient.
 static const int backBufferCount = 3;
 
+//  Shadow map size (the texture dimension is shadowmapSize * shadowmapSize)
+static const uint32_t shadowmapSize = 1024;
 
 void Renderer::OnCreate(Device* pDevice, SwapChain* pSwapChain)
 {
@@ -33,7 +35,7 @@ void Renderer::OnCreate(Device* pDevice, SwapChain* pSwapChain)
 
 	// Quick helper to upload resources, it has it's own commandList and uses suballocation.
 	// for 4K textures we'll need 100Megs
-	const uint32_t uploadHeapMemSize = 100 * 1024 * 1024;
+	const uint32_t uploadHeapMemSize = 128 * 1024 * 1024;
 	this->uploadHeap.OnCreate(pDevice, uploadHeapMemSize); // initialize an upload heap (uses suballocation for faster results)
 
 	// initialize the GPU time stamps module
@@ -42,14 +44,31 @@ void Renderer::OnCreate(Device* pDevice, SwapChain* pSwapChain)
 	//	setup pass resources
     //
     //  pass 1.1 : reflective shadow map (4x of 1024x1024)
-    this->rsm = new RSM();
-    this->rsm->OnCreate(this->pDevice,
-        &this->uploadHeap,
-        &this->resViewHeaps,
-        &this->dBufferRing,
-        &this->sBufferPool,
-        1024, 1024
-    );
+    {
+        const uint32_t totalRSMSize = shadowmapSize * 2;
+
+        this->pRSM = new GBuffer();
+        this->pRSM->OnCreate(this->pDevice,
+            &this->resViewHeaps,
+            {
+                //  RSM
+                { GBUFFER_DEPTH, VK_FORMAT_D32_SFLOAT},
+                { GBUFFER_WORLD_COORD, VK_FORMAT_R16G16B16A16_SFLOAT},
+                { GBUFFER_NORMAL_BUFFER, VK_FORMAT_R16G16B16A16_SFLOAT},
+                { GBUFFER_DIFFUSE, VK_FORMAT_R16G16B16A16_SFLOAT}, // represent flux map
+                { GBUFFER_SPECULAR_ROUGHNESS, VK_FORMAT_R16G16B16A16_SFLOAT},
+            },
+            1
+            );
+        GBufferFlags fullRSM = GBUFFER_DEPTH |
+            GBUFFER_WORLD_COORD | GBUFFER_NORMAL_BUFFER |
+            GBUFFER_DIFFUSE | GBUFFER_SPECULAR_ROUGHNESS;
+        this->rp_RSM_full.OnCreate(this->pRSM, fullRSM, true, "RSM RenderPass");
+
+        //  init data immediately since they don't depend on window size
+        this->pRSM->OnCreateWindowSizeDependentResources(pSwapChain, totalRSMSize, totalRSMSize);
+        this->rp_RSM_full.OnCreateWindowSizeDependentResources(totalRSMSize, totalRSMSize);
+    }
 	//	pass 1.2 : G-buffer
     {
         this->pGBuffer = new GBuffer();
@@ -76,21 +95,35 @@ void Renderer::OnCreate(Device* pDevice, SwapChain* pSwapChain)
         this->rp_skyDome.OnCreate(this->pGBuffer, GBUFFER_FORWARD, true, "SkyDome RenderPass");
     }
     //  pass 2.1 : D-Light
-    this->dLighting = new DirectLighting();
-    this->dLighting->OnCreate(this->pDevice,
-        &this->uploadHeap,
-        &this->resViewHeaps,
-        &this->dBufferRing,
-        &this->sBufferPool
-    );
+    {
+        this->dLighting = new DirectLighting();
+        this->dLighting->OnCreate(this->pDevice,
+            &this->uploadHeap,
+            &this->resViewHeaps,
+            &this->dBufferRing,
+            &this->sBufferPool
+        );
+
+        DLightInput::LightGBuffer lightGB;
+        lightGB.depth = this->pRSM->m_DepthBufferSRV;
+        this->dLighting->setLightGBuffer(&lightGB);
+    }
     //  pass 2.2 : I-Light
-    this->iLighting = new IndirectLighting();
-    this->iLighting->OnCreate(this->pDevice,
-        &this->uploadHeap,
-        &this->resViewHeaps,
-        &this->dBufferRing,
-        &this->sBufferPool
-    );
+    {
+        this->iLighting = new IndirectLighting();
+        this->iLighting->OnCreate(this->pDevice,
+            &this->uploadHeap,
+            &this->resViewHeaps,
+            &this->dBufferRing,
+            &this->sBufferPool
+        );
+
+        ILightInput::LightGBuffer lightGB;
+        lightGB.worldCoord = this->pRSM->m_WorldCoordSRV;
+        lightGB.normal = this->pRSM->m_NormalBufferSRV;
+        lightGB.flux = this->pRSM->m_DiffuseSRV;
+        this->iLighting->setLightGBuffer(&lightGB);
+    }
 
     //  skydome
     {
@@ -146,9 +179,12 @@ void Renderer::OnDestroy()
     delete this->pGBuffer;
     this->pGBuffer = nullptr;
 
-    this->rsm->OnDestroy();
-    delete this->rsm;
-    this->rsm = nullptr;
+    this->rp_RSM_full.OnDestroyWindowSizeDependentResources();
+    this->pRSM->OnDestroyWindowSizeDependentResources();
+    this->rp_RSM_full.OnDestroy();
+    this->pRSM->OnDestroy();
+    delete this->pRSM;
+    this->pRSM = nullptr;
 
     // this->gTimeStamps.OnDestroy();
     this->uploadHeap.OnDestroy();
@@ -180,7 +216,7 @@ void Renderer::OnCreateWindowSizeDependentResources(SwapChain* pSwapChain, uint3
     this->pGBuffer->OnCreateWindowSizeDependentResources(pSwapChain, Width, Height);
     this->rp_gBuffer_full.OnCreateWindowSizeDependentResources(Width, Height);
     this->rp_skyDome.OnCreateWindowSizeDependentResources(Width, Height);
-    
+
     this->dLighting->OnCreateWindowSizeDependentResources(Width, Height, this->pGBuffer);
     {
         DLightInput::CameraGBuffer camGB;
@@ -251,23 +287,29 @@ void Renderer::OnRender(SwapChain* pSwapChain, Camera* pCamera, Renderer::State*
         //  set camera
         pPerFrameData = this->res_scene->m_pGLTFCommon->SetPerFrameData(*pCamera);
 
+        //  disable RSM write
+        pPerFrameData->rsmLightIndex = -1;
+
         //  set light properties
         pPerFrameData->iblFactor = 0.36f;
         pPerFrameData->emmisiveFactor = 1.f;
         pPerFrameData->invScreenResolution[0] = 1.f / static_cast<float>(this->width);
         pPerFrameData->invScreenResolution[1] = 1.f / static_cast<float>(this->height);
 
-        //  only sun light (directional light)
-        pPerFrameData->lights[0].shadowMapIndex = 0;
-        if (pPerFrameData->lights[0].type == LightType_Directional)
+        //  setup light render target
+        int lightIndex = 0;
+        pPerFrameData->lights[lightIndex].shadowMapIndex = 0;
+        if (pPerFrameData->lights[lightIndex].type == LightType_Directional)
         {
-            pPerFrameData->lights[0].depthBias = 100.0f / 100000.0f;
+            pPerFrameData->lights[lightIndex].depthBias = 100.0f / 100000.0f;
+        }
+        else if (pPerFrameData->lights[lightIndex].type == LightType_Spot)
+        {
+            pPerFrameData->lights[lightIndex].depthBias = 70.0f / 100000.0f;
         }
         else
-        {
-            pPerFrameData->lights[0].depthBias = 70.0f / 100000.0f;
-        }
-
+            pPerFrameData->lights[lightIndex].shadowMapIndex = -1;
+        
         this->res_scene->SetPerFrameConstants();
         //this->res_scene->SetSkinningMatricesForSkeletons();
     }
@@ -289,93 +331,97 @@ void Renderer::OnRender(SwapChain* pSwapChain, Camera* pCamera, Renderer::State*
         this->skyDomeProc.Draw(cmdBuf1, skyDomeConstants);
 
         this->rp_skyDome.EndPass(cmdBuf1);
-
-        //  HDR (final RT) barrier to prevent W-A-W hazard from DirectLighting
-        {
-            VkImageMemoryBarrier barriers[1];
-            barriers[0].sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-            barriers[0].pNext = NULL;
-            barriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            barriers[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            barriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-            barriers[0].subresourceRange.baseMipLevel = 0;
-            barriers[0].subresourceRange.levelCount = 1;
-            barriers[0].subresourceRange.baseArrayLayer = 0;
-            barriers[0].subresourceRange.layerCount = 1;
-
-            //  barrier 0 : color buffer -> TAA
-            barriers[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            barriers[0].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            barriers[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            barriers[0].image = this->pGBuffer->m_HDR.Resource();
-
-            vkCmdPipelineBarrier(cmdBuf1,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                0, 0, NULL, 0, NULL,
-                1, barriers);
-        }
     }
 
-    //  Pass 1.1 : shadow map
-    if (this->rsm->resourcesBound() && pPerFrameData)
-    {
-        //  setup light matrix
-        //  ToDo : setup this array to utilize multiple light src. (<=4)
-        Light* lightViewProjs[4];
-        lightViewProjs[0] = &(pPerFrameData->lights[0]);
-        lightViewProjs[1] = NULL;
-        lightViewProjs[2] = NULL;
-        lightViewProjs[3] = NULL;
+    using BatchList = GltfPbrPass::BatchList;
+    std::vector<BatchList> opaques, transparents;
+    bool gBufReady = false, rsmReady = false;
 
-        this->rsm->Draw(cmdBuf1, lightViewProjs);
-    }
-
-    //  pass 1.2 : G-Buffer / main pass
+    //  pass 1.1 : G-Buffer / main pass
     if(this->pGltfPbrPass && pPerFrameData)
     {
         //  retrieve render batch lists of separated opaque meshes and transparent meshes
-        using BatchList = GltfPbrPass::BatchList;
-        std::vector<BatchList> opaques, transparents;
         this->pGltfPbrPass->BuildBatchLists(&opaques, &transparents);
+
+        //  determine render area
+        VkRect2D rectScissor_GBuffer = this->rectScissor;
 
         //  render scene (opaque objects)
         //  ToDo : render scene (transparent objects)
         {
-            this->rp_gBuffer_full.BeginPass(cmdBuf1, this->rectScissor);
+            this->rp_gBuffer_full.BeginPass(cmdBuf1, rectScissor_GBuffer);
 
             this->pGltfPbrPass->DrawBatchList(cmdBuf1, &opaques);
 
             this->rp_gBuffer_full.EndPass(cmdBuf1);
         }
+
+        gBufReady = true;
     }
 
-    if (this->rsm->resourcesBound() && this->pGltfPbrPass && pPerFrameData)
+    //  Pass 1.2 : reflective shadow map
+    if (this->pRSMPass && pPerFrameData)
+    {
+        //  setup each RSM quarter
+        const uint32_t viewportOffsetsX[4] = { 0, 1, 0, 1 };
+        const uint32_t viewportOffsetsY[4] = { 0, 0, 1, 1 };
+        const uint32_t viewportWidth = shadowmapSize;
+        const uint32_t viewportHeight = shadowmapSize;
+
+        //  ToDo : setup this pass to utilize multiple light src. (<=4)
+        //  set light frustum info
+        int rsmIndex = 0;
+        pPerFrameData->mCameraCurrViewProj = pPerFrameData->lights[rsmIndex].mLightViewProj;
+        pPerFrameData->rsmLightIndex = rsmIndex;
+        this->res_scene->SetPerFrameConstants();
+
+        //  prepare batches
+        opaques.clear(); transparents.clear();
+        this->pRSMPass->BuildBatchLists(&opaques, &transparents);
+
+        //  determine render area
+        VkRect2D rectScissor_RSM;
+        rectScissor_RSM.offset = { (int32_t)(viewportOffsetsX[rsmIndex] * viewportWidth),
+                                (int32_t)(viewportOffsetsY[rsmIndex] * viewportHeight) };
+        rectScissor_RSM.extent = { viewportWidth, viewportHeight };
+
+        //  render scene (opaque objects)
+        //  ToDo : render scene (transparent objects)
+        {
+            this->rp_RSM_full.BeginPass(cmdBuf1, rectScissor_RSM);
+
+            this->pRSMPass->DrawBatchList(cmdBuf1, &opaques);
+
+            this->rp_RSM_full.EndPass(cmdBuf1);
+        }
+
+        rsmReady = true;
+    }
+
+    if (gBufReady && rsmReady)
     {
         //  image barrier (synchronization) before lighting phase
         this->doGeomDataTransition(cmdBuf1);
 
         //  pass 2.1 : D-light
-        if(dLightReady)
-        {
-            //  set uniform data
-            DirectLighting::per_frame* dLightingPerFrameData = this->dLighting->SetPerFrameConstants();
-            dLightingPerFrameData->cameraPos = pPerFrameData->cameraPos;
-            dLightingPerFrameData->light = pPerFrameData->lights[0];
+        //
+        
+        //  set uniform data
+        DirectLighting::per_frame* dLightingPerFrameData = this->dLighting->SetPerFrameConstants();
+        dLightingPerFrameData->cameraPos = pPerFrameData->cameraPos;
+        dLightingPerFrameData->light = pPerFrameData->lights[0];
 
-            this->dLighting->Draw(cmdBuf1, &this->rectScissor);
-        }
+        this->dLighting->Draw(cmdBuf1, &this->rectScissor);
+        
 
         //  pass 2.2 : I-light
-        if(iLightReady)
-        {
-            //  set uniform data
-            IndirectLighting::per_frame* iLightingPerFrameData = this->iLighting->SetPerFrameConstants();
-            iLightingPerFrameData->light = pPerFrameData->lights[0];
+        //
+        
+        //  set uniform data
+        IndirectLighting::per_frame* iLightingPerFrameData = this->iLighting->SetPerFrameConstants();
+        iLightingPerFrameData->light = pPerFrameData->lights[0];
 
-            this->iLighting->Draw(cmdBuf1, &this->rectScissor);
-        }
+        this->iLighting->Draw(cmdBuf1, &this->rectScissor);
     }
 
     //  image barrier (synchronization) before aggregation
@@ -494,7 +540,7 @@ int Renderer::loadScene(GLTFCommon* pLoader, int stage)
     if (stage == 0)
     {
     }
-    else if (stage == 5)
+    else if (stage == 1)
     {
         Profile p("SceneResource->Load");
 
@@ -510,15 +556,28 @@ int Renderer::loadScene(GLTFCommon* pLoader, int stage)
         );
         this->res_scene->LoadTextures(&this->asyncPool);
     }
-    else if (stage == 6)
+    else if (stage == 2)
     {
-        Profile p("RSM->OnCreate");
+        Profile p("RSM->CreatePass");
 
-        this->rsm->bindResources(this->res_scene, &this->asyncPool);
+        this->pRSMPass = new GltfPbrPass();
+        this->pRSMPass->OnCreate(
+            this->pDevice,
+            &this->uploadHeap,
+            &this->resViewHeaps,
+            &this->dBufferRing,
+            &this->sBufferPool,
+            this->res_scene,
+            nullptr, // no non-procedural skydome
+            false, // no SSAO
+            VK_NULL_HANDLE, // no shadow calculation in GBuffer pass
+            &this->rp_RSM_full,
+            &this->asyncPool
+        );
     }
-    else if (stage == 7)
+    else if (stage == 3)
     {
-        Profile p("GBuffer->OnCreate");
+        Profile p("GBuffer->CreatePass");
 
         this->pGltfPbrPass = new GltfPbrPass();
         this->pGltfPbrPass->OnCreate(
@@ -535,29 +594,7 @@ int Renderer::loadScene(GLTFCommon* pLoader, int stage)
             &this->asyncPool
         );
     }
-    else if (stage == 8)
-    {
-        Profile p("DirectLighting->SetRSMInput");
-
-        DLightInput::LightGBuffer lightGB;
-        lightGB.depth = this->rsm->m_DepthSRV;
-        this->dLighting->setLightGBuffer(&lightGB);
-
-        this->dLightReady = true;
-    }
-    else if (stage == 9)
-    {
-        Profile p("IndirectLighting->SetRSMInput");
-
-        ILightInput::LightGBuffer lightGB;
-        lightGB.worldCoord = this->rsm->m_WorldCoordSRV;
-        lightGB.normal = this->rsm->m_NormalSRV;
-        lightGB.flux = this->rsm->m_FluxSRV;
-        this->iLighting->setLightGBuffer(&lightGB);
-
-        this->iLightReady = true;
-    }
-    else if (stage == 10)
+    else if (stage == 4)
     {
         Profile p("Flush");
 
@@ -579,9 +616,6 @@ void Renderer::unloadScene()
 {
     this->pDevice->GPUFlush();
 
-    this->dLightReady = false;
-    this->iLightReady = false;
-
     if (this->pGltfPbrPass)
     {
         this->pGltfPbrPass->OnDestroy();
@@ -589,7 +623,12 @@ void Renderer::unloadScene()
         this->pGltfPbrPass = nullptr;
     }
 
-    this->rsm->freeResources();
+    if (this->pRSMPass)
+    {
+        this->pRSMPass->OnDestroy();
+        delete this->pRSMPass;
+        this->pRSMPass = nullptr;
+    }
 
     if (this->res_scene)
     {
@@ -645,15 +684,15 @@ void Renderer::doGeomDataTransition(VkCommandBuffer cmdBuf)
         //  barrier 4 : world coord
         barriers[4] = barriers[0];
         barriers[4].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-        barriers[4].image = this->rsm->m_WorldCoord.Resource();
+        barriers[4].image = this->pRSM->m_WorldCoord.Resource();
 
         //  barrier 5 : normal
         barriers[5] = barriers[4];
-        barriers[5].image = this->rsm->m_Normal.Resource();
+        barriers[5].image = this->pRSM->m_NormalBuffer.Resource();
 
         //  barrier 6 : flux
         barriers[6] = barriers[4];
-        barriers[6].image = this->rsm->m_Flux.Resource();
+        barriers[6].image = this->pRSM->m_Diffuse.Resource();
 
         //  barrier 7 : depth
         barriers[7] = barriers[0];
@@ -662,7 +701,7 @@ void Renderer::doGeomDataTransition(VkCommandBuffer cmdBuf)
         barriers[7].oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
         barriers[7].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
         barriers[7].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-        barriers[7].image = this->rsm->m_Depth.Resource();
+        barriers[7].image = this->pRSM->m_DepthBuffer.Resource();
     }
 
     vkCmdPipelineBarrier(cmdBuf,

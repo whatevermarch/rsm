@@ -53,17 +53,18 @@ protected:
 	GLTFTexturesAndBuffers* res_scene = nullptr;
 	
 	//	G-Buffer pass
-	GBuffer* pGBuffer = nullptr;						// G-Buffer itself
+	GBuffer* pGBuffer = nullptr;						
 	GBufferRenderPass rp_gBuffer_full;
-	GltfPbrPass* pGltfPbrPass = nullptr;				// PBR pass to store geom data
+	GltfPbrPass* pGltfPbrPass = nullptr;				
 
 	//	RSM pass
-	RSM* rsm = nullptr;
+	GBuffer* pRSM = nullptr;
+	GBufferRenderPass rp_RSM_full;
+	GltfPbrPass* pRSMPass = nullptr;
 	
 	//	lighting passes
 	DirectLighting* dLighting = nullptr;
 	IndirectLighting* iLighting = nullptr;
-	bool dLightReady = false, iLightReady = false;
 
 	//	skydome
 	//SkyDome skyDome;

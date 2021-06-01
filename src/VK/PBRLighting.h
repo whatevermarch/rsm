@@ -128,15 +128,6 @@ vec3 applyDirectionalLight(Light light, MaterialInfo materialInfo, vec3 normal, 
     return light.intensity * light.color * shade;
 }
 
-vec3 applyPointLight(Light light, MaterialInfo materialInfo, vec3 normal, vec3 worldPos, vec3 view)
-{
-    vec3 pointToLight = light.position - worldPos;
-    float distance = length(pointToLight);
-    float attenuation = getRangeAttenuation(light.range, distance);
-    vec3 shade = getPointShade(pointToLight, materialInfo, normal, view);
-    return attenuation * light.intensity * light.color * shade;
-}
-
 vec3 applySpotLight(Light light, MaterialInfo materialInfo, vec3 normal, vec3 worldPos, vec3 view)
 {
     vec3 pointToLight = light.position - worldPos;

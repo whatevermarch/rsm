@@ -5,7 +5,6 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/../../common.cmake)
 set(headers
 	pch.h
 	Renderer.h
-	RSM.h
 	DirectLighting.h
 	IndirectLighting.h
 	Aggregator.h)
@@ -14,17 +13,14 @@ source_group("Header Files" FILES ${headers})
 set(sources
 	App.cpp
 	Renderer.cpp
-	RSM.cpp
 	DirectLighting.cpp
 	IndirectLighting.cpp
 	Aggregator.cpp)
 source_group("Source Files" FILES ${sources})
 
 set(shaders
-	Bypass-vert.glsl
-	RSM-vert.glsl
-	RSM-frag.glsl
 	PBRLighting.h
+	Bypass-vert.glsl
 	DirectLighting-frag.glsl
 	IndirectLighting-frag.glsl
 	Aggregator.glsl)
