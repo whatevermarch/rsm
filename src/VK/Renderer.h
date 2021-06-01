@@ -1,6 +1,5 @@
 #pragma once
 
-#include "RSM.h"
 #include "DirectLighting.h"
 #include "IndirectLighting.h"
 #include "Aggregator.h"
